@@ -397,7 +397,7 @@ class RhythmAI:
         else:
             print('按键模式: 已禁用 (仅预览)')
 
-        from mss import mss as mss_cls
+        from mss import MSS as mss_cls
         user32 = ctypes.windll.user32
         target_fps = CONFIG['inference']['capture_fps']
         interval = 1.0 / target_fps
