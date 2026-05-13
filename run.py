@@ -43,6 +43,16 @@ if sys.platform == 'win32':
             except Exception:
                 pass
 
+if sys.platform == 'win32':
+    # Bump the global timer to 1ms so time.sleep can hit ~120fps loop intervals;
+    # default Windows resolution is ~15.6ms which clamps capture_fps to ~64.
+    try:
+        import atexit
+        ctypes.windll.winmm.timeBeginPeriod(1)
+        atexit.register(ctypes.windll.winmm.timeEndPeriod, 1)
+    except Exception:
+        pass
+
 CONFIG = {
     'data': {
         'frame_stack': 4,
@@ -305,30 +315,30 @@ class RhythmAI:
         if self._hwnd:
             ctypes.windll.user32.SetForegroundWindow(self._hwnd)
 
-    def _crop_frame(self, frame_bgr):
-        h, w = frame_bgr.shape[:2]
+    def _compute_capture_rect(self, x, y, w, h):
+        # Apply the configured crop_region directly to the MSS monitor rect so
+        # BitBlt only grabs the gameplay strip instead of the full window —
+        # ~77% fewer pixels on PC, and cvtColor/resize downstream see less data.
         is_mobile = h > w
         crop_region = self.crop_region_mobile if is_mobile else self.crop_region_pc
-        if crop_region:
-            x1 = int(crop_region[0] * w)
-            y1 = int(crop_region[1] * h)
-            x2 = int(crop_region[2] * w)
-            y2 = int(crop_region[3] * h)
-            frame_bgr = frame_bgr[y1:y2, x1:x2]
-        return frame_bgr
+        if not crop_region:
+            return {'left': x, 'top': y, 'width': w, 'height': h}
+        cx1 = int(crop_region[0] * w)
+        cy1 = int(crop_region[1] * h)
+        cx2 = int(crop_region[2] * w)
+        cy2 = int(crop_region[3] * h)
+        return {'left': x + cx1, 'top': y + cy1, 'width': cx2 - cx1, 'height': cy2 - cy1}
 
-    def _preprocess_frame(self, frame_bgr):
-        frame_bgr = self._crop_frame(frame_bgr)
+    def _preprocess_frame(self, frame_bgra):
+        # Resize the contiguous BGRA buffer first, then drop the alpha channel
+        # via cvtColor on the tiny 240x144 tensor — avoids a full-size BGRA→BGR
+        # allocation per frame.
+        resized = cv2.resize(frame_bgra, self.target_size, interpolation=cv2.INTER_AREA)
         if self.grayscale:
-            frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        else:
-            frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        frame = cv2.resize(frame, self.target_size, interpolation=cv2.INTER_AREA)
-        if self.grayscale:
-            frame = frame[np.newaxis, :]
-        else:
-            frame = frame.transpose(2, 0, 1)
-        return frame
+            frame = cv2.cvtColor(resized, cv2.COLOR_BGRA2GRAY)
+            return frame[np.newaxis, :]
+        frame = cv2.cvtColor(resized, cv2.COLOR_BGRA2RGB)
+        return frame.transpose(2, 0, 1)
 
     def _build_input_array(self):
         channels = 1 if self.grayscale else 3
@@ -417,11 +427,14 @@ class RhythmAI:
                             time.sleep(0.5)
                             continue
 
+                        monitor = self._compute_capture_rect(x, y, w, h)
+                        if monitor['width'] <= 0 or monitor['height'] <= 0:
+                            time.sleep(0.5)
+                            continue
+
                         t0 = time.perf_counter()
-                        monitor = {'left': x, 'top': y, 'width': w, 'height': h}
                         screenshot = np.array(sct.grab(monitor))
-                        frame_bgr = cv2.cvtColor(screenshot, cv2.COLOR_BGRA2BGR)
-                        processed = self._preprocess_frame(frame_bgr)
+                        processed = self._preprocess_frame(screenshot)
                         self.frame_buffer.append(processed)
 
                         if len(self.frame_buffer) >= self.frame_stack:
@@ -444,7 +457,7 @@ class RhythmAI:
                                 print(f'\r{fps:.0f}FPS | {keys_str} | ACT:{act_str}', end='', flush=True)
 
                             if self.show:
-                                vis = frame_bgr.copy()
+                                vis = np.ascontiguousarray(screenshot[..., :3])
                                 bar_h = 30
                                 overlay = vis.copy()
                                 cv2.rectangle(overlay, (0, 0), (vis.shape[1], bar_h), (0, 0, 0), -1)
