@@ -1,12 +1,7 @@
 # Nikke-Music_Auto_Script
 
-这是一个自动化脚本项目。
+基于 ONNX Runtime 的 NIKKE 音游自动演奏脚本，支持 DirectML GPU 与 CPU。
 
-## 功能说明
-- 自动播放音乐
-- 其他待补充的功能...
+## 使用
 
-## 使用方法
-1. 确保安装了必要的依赖
-2. 运行主程序
-3. 查看输出日志
+运行 `python run.py`。

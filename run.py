@@ -64,7 +64,7 @@ CONFIG = {
         'crop_region_mobile': [0.0, 0.292, 1.0, 0.838],
     },
     'inference': {
-        'capture_fps': 120,
+        'capture_fps': 240,
         'confidence_threshold': 0.5,
         'key_delay': 0.02,
         'key_map': {
